@@ -1,0 +1,15 @@
+{
+  "name": "frontend",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "expo start",
+    "web": "expo start --web",
+    "build:web": "expo build:web"
+  },
+  "dependencies": {
+    "expo": "~49.0.0",
+    "expo-av": "~15.0.0",
+    "react": "18.2.0",
+    "react-native": "0.72.0"
+  }
+}
