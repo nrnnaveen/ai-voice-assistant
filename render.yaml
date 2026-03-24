@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: ai-voice-backend
+    env: node
+    plan: free
+    buildCommand: "cd backend && npm install"
+    startCommand: "node server.js"
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+
+  - type: static
+    name: ai-voice-frontend
+    env: static
+    plan: free
+    buildCommand: "cd frontend && npm install && npm run build:web"
+    publishPath: "frontend/web-build"
