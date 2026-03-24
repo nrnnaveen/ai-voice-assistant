@@ -1,25 +1,36 @@
 import React, { useState, useRef } from "react";
 import { View, Button, Text, Platform, StyleSheet } from "react-native";
+import * as FileSystem from "expo-file-system";
+import * as Speech from "expo-speech";
 
 export default function App() {
   const [recording, setRecording] = useState(null);
   const [transcript, setTranscript] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
+  const [audioURL, setAudioURL] = useState(null);
 
+  // For web
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
 
-  // Start recording
   const startRecording = async () => {
+    setTranscript("");
+    setAudioURL(null);
+
     if (Platform.OS === "web") {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const mediaRecorder = new MediaRecorder(stream);
         recordedChunksRef.current = [];
-        mediaRecorder.ondataavailable = (e) => recordedChunksRef.current.push(e.data);
-        mediaRecorder.start();
+
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) recordedChunksRef.current.push(e.data);
+        };
+
+        mediaRecorder.onstart = () => setStatusMessage("Recording on web...");
+
         mediaRecorderRef.current = mediaRecorder;
-        setStatusMessage("Recording on web...");
+        mediaRecorder.start();
       } catch (err) {
         console.error(err);
         setStatusMessage("Permission denied or error");
@@ -27,9 +38,9 @@ export default function App() {
       return;
     }
 
-    // Mobile (expo-av)
-    const { Audio } = await import("expo-av");
+    // Mobile
     try {
+      const { Audio } = await import("expo-av");
       const { status } = await Audio.requestPermissionsAsync();
       if (status !== "granted") {
         setStatusMessage("Permission denied!");
@@ -46,34 +57,48 @@ export default function App() {
     }
   };
 
-  // Stop recording
   const stopRecording = async () => {
     if (Platform.OS === "web") {
       const mediaRecorder = mediaRecorderRef.current;
       if (!mediaRecorder) return;
-      mediaRecorder.stop();
+
       mediaRecorder.onstop = async () => {
         const blob = new Blob(recordedChunksRef.current, { type: "audio/webm" });
+        const url = URL.createObjectURL(blob);
+        setAudioURL(url);
+
         const base64 = await blobToBase64(blob);
 
-        const response = await fetch("/api/deepgram", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ audioBase64: base64 }),
-        });
-        const data = await response.json();
-        setTranscript(data.transcript || "No transcript");
+        try {
+          const response = await fetch("/api/deepgram", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ audioBase64: base64 }),
+          });
+          const data = await response.json();
+          setTranscript(data.transcript || "No transcript");
+          Speech.speak(data.transcript || "No transcript");
+        } catch (err) {
+          console.error(err);
+          setTranscript("Backend error");
+        }
+
         setStatusMessage("Recording stopped");
       };
+
+      mediaRecorder.stop();
+      mediaRecorderRef.current = null;
       return;
     }
 
     // Mobile
     if (!recording) return;
-    const { FileSystem } = await import("expo-file-system");
     try {
+      const { Audio } = await import("expo-av");
       await recording.stopAndUnloadAsync();
       const uri = recording.getURI();
+      setAudioURL(uri);
+
       const base64 = await FileSystem.readAsStringAsync(uri, { encoding: "base64" });
 
       const response = await fetch("/api/deepgram", {
@@ -81,8 +106,10 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ audioBase64: base64 }),
       });
+
       const data = await response.json();
       setTranscript(data.transcript || "No transcript");
+      Speech.speak(data.transcript || "No transcript");
       setRecording(null);
       setStatusMessage("Recording stopped");
     } catch (err) {
@@ -99,10 +126,20 @@ export default function App() {
       reader.readAsDataURL(blob);
     });
 
+  const playRecording = async () => {
+    if (Platform.OS === "web") return; // Web uses <audio> element
+    if (!audioURL) return;
+
+    const { Audio } = await import("expo-av");
+    const { sound } = await Audio.Sound.createAsync({ uri: audioURL });
+    await sound.playAsync();
+  };
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>AI Voice Assistant</Text>
       <Text style={styles.status}>{statusMessage}</Text>
+
       <View style={styles.buttonContainer}>
         <Button
           title="Start Recording"
@@ -113,9 +150,25 @@ export default function App() {
         <Button
           title="Stop Recording"
           onPress={stopRecording}
-          disabled={recording === null && Platform.OS !== "web"}
+          disabled={
+            (recording === null && Platform.OS !== "web" && !mediaRecorderRef.current)
+          }
         />
+        {audioURL && Platform.OS !== "web" && (
+          <>
+            <View style={{ height: 10 }} />
+            <Button title="Play Recording" onPress={playRecording} />
+          </>
+        )}
       </View>
+
+      {audioURL && Platform.OS === "web" && (
+        <View style={{ marginVertical: 20 }}>
+          <Text style={{ fontWeight: "600", marginBottom: 5 }}>Playback:</Text>
+          <audio controls src={audioURL} />
+        </View>
+      )}
+
       <Text style={styles.transcriptTitle}>Transcript:</Text>
       <Text style={styles.transcript}>{transcript}</Text>
     </View>
@@ -123,7 +176,14 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: "flex-start", alignItems: "center", padding: 20, backgroundColor: "#f5f5f5", paddingTop: 50 },
+  container: {
+    flex: 1,
+    justifyContent: "flex-start",
+    alignItems: "center",
+    padding: 20,
+    backgroundColor: "#f5f5f5",
+    paddingTop: 50,
+  },
   title: { fontSize: 24, fontWeight: "bold", marginBottom: 20 },
   status: { fontSize: 16, marginBottom: 20, color: "gray", textAlign: "center" },
   buttonContainer: { width: "80%", marginBottom: 30 },
